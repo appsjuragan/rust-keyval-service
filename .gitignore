@@ -1,0 +1,31 @@
+/target
+# === Rust ===
+/target/
+/debug/
+/release/
+**/*.rs.bk
+Cargo.lock
+*.profraw
+
+# === Go ===
+/bin/
+/pkg/
+*.exe
+*.test
+*.out
+
+# === OS / Editor ===
+.DS_Store
+Thumbs.db
+
+# === IDE ===
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# === Logs ===
+*.log
+
+# === Misc ===
+.env
