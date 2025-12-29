@@ -1,10 +1,6 @@
-/target
 # === Rust ===
 /target/
-/debug/
-/release/
 **/*.rs.bk
-Cargo.lock
 *.profraw
 
 # === Go ===
@@ -27,5 +23,9 @@ Thumbs.db
 # === Logs ===
 *.log
 
-# === Misc ===
+# === Docker ===
+*.pdb
+
+# === Environment ===
 .env
+.env.local

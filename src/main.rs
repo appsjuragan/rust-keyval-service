@@ -1,5 +1,6 @@
 use std::{
     collections::HashMap,
+    env,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
     sync::{Arc, Mutex, atomic::{AtomicUsize, Ordering}},
@@ -8,6 +9,8 @@ use std::{
 };
 
 use crossbeam_channel;
+use chrono::Utc;
+use serde::Serialize;
 
 #[derive(Clone)]
 struct Item {
@@ -19,15 +22,42 @@ type Db = Arc<Mutex<HashMap<String, Item>>>;
 
 const THREAD_POOL_SIZE: usize = 8;
 const CLEAN_INTERVAL: u64 = 1;
+const METRICS_INTERVAL: u64 = 5;
+const ES_INDEX: &str = "kv-metrics";
 
-// GLOBAL METRIC
+fn get_es_url() -> String {
+    env::var("ES_URL").unwrap_or_else(|_| "http://localhost:9200".to_string())
+}
+
+// GLOBAL METRICS
 static EXPIRED_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static HIT_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static MISS_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static GET_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static SET_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static DEL_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+#[derive(Serialize)]
+struct Metrics {
+    #[serde(rename = "@timestamp")]
+    timestamp: String,
+    hits: usize,
+    misses: usize,
+    hit_ratio: f64,
+    gets: usize,
+    sets: usize,
+    deletes: usize,
+    expired: usize,
+    items: usize,
+    memory_bytes: usize,
+}
 
 fn main() {
     let db: Db = Arc::new(Mutex::new(HashMap::new()));
 
     start_cleaner(db.clone());
     start_monitor(db.clone());
+    start_metrics_emitter(db.clone());
 
     let listener = TcpListener::bind("0.0.0.0:11223").expect("cannot bind 11223");
     println!("KV server listening on port 11223");
@@ -81,26 +111,31 @@ fn handle_client(mut stream: TcpStream, db: Db) {
                 };
 
                 db.lock().unwrap().insert(key.to_string(), Item { value, expires_at });
+                SET_COUNTER.fetch_add(1, Ordering::Relaxed);
                 stream.write_all(b"OK\n").ok();
             }
 
             "GET" => {
                 let key = parts.next().unwrap_or("").to_string();
                 let mut db_guard = db.lock().unwrap();
+                GET_COUNTER.fetch_add(1, Ordering::Relaxed);
 
                 if let Some(item) = db_guard.get(&key) {
                     if let Some(exp) = item.expires_at {
                         if exp <= SystemTime::now() {
                             db_guard.remove(&key);
                             EXPIRED_COUNTER.fetch_add(1, Ordering::Relaxed);
+                            MISS_COUNTER.fetch_add(1, Ordering::Relaxed);
                             stream.write_all(b"(expired)\n").ok();
                             continue;
                         }
                     }
+                    HIT_COUNTER.fetch_add(1, Ordering::Relaxed);
                     let mut data = item.value.clone();
                     data.push(b'\n');
                     stream.write_all(&data).ok();
                 } else {
+                    MISS_COUNTER.fetch_add(1, Ordering::Relaxed);
                     stream.write_all(b"(nil)\n").ok();
                 }
             }
@@ -108,6 +143,7 @@ fn handle_client(mut stream: TcpStream, db: Db) {
             "DEL" => {
                 let key = parts.next().unwrap_or("").to_string();
                 let removed = db.lock().unwrap().remove(&key);
+                DEL_COUNTER.fetch_add(1, Ordering::Relaxed);
                 if removed.is_some() { stream.write_all(b"1\n").ok(); }
                 else { stream.write_all(b"0\n").ok(); }
             }
@@ -120,10 +156,19 @@ fn handle_client(mut stream: TcpStream, db: Db) {
                     .map(|v| v.value.len() + 64)
                     .sum();
 
-                let msg = format!("items={} memory={}bytes expired={}\n",
+                let hits = HIT_COUNTER.load(Ordering::Relaxed);
+                let misses = MISS_COUNTER.load(Ordering::Relaxed);
+                let total = hits + misses;
+                let hit_ratio = if total > 0 { (hits as f64 / total as f64) * 100.0 } else { 0.0 };
+
+                let msg = format!(
+                    "items={} memory={}bytes expired={} hits={} misses={} hit_ratio={:.1}%\n",
                     items,
                     memory,
                     EXPIRED_COUNTER.load(Ordering::Relaxed),
+                    hits,
+                    misses,
+                    hit_ratio,
                 );
                 stream.write_all(msg.as_bytes()).ok();
             }
@@ -171,11 +216,70 @@ fn start_monitor(db: Db) {
             .sum();
         drop(db_guard);
 
+        let hits = HIT_COUNTER.load(Ordering::Relaxed);
+        let misses = MISS_COUNTER.load(Ordering::Relaxed);
+        let total = hits + misses;
+        let hit_ratio = if total > 0 { (hits as f64 / total as f64) * 100.0 } else { 0.0 };
+
         println!(
-            "[MONITOR] items={}  memory={} bytes  expired={}",
+            "[MONITOR] items={}  memory={} bytes  expired={}  hits={}  misses={}  hit_ratio={:.1}%",
             items,
             memory,
             EXPIRED_COUNTER.load(Ordering::Relaxed),
+            hits,
+            misses,
+            hit_ratio,
         );
+    });
+}
+
+fn start_metrics_emitter(db: Db) {
+    thread::spawn(move || {
+        let client = reqwest::blocking::Client::new();
+        
+        loop {
+            thread::sleep(Duration::from_secs(METRICS_INTERVAL));
+
+            let db_guard = db.lock().unwrap();
+            let items = db_guard.len();
+            let memory: usize = db_guard.values()
+                .map(|v| v.value.len() + 64)
+                .sum();
+            drop(db_guard);
+
+            let hits = HIT_COUNTER.load(Ordering::Relaxed);
+            let misses = MISS_COUNTER.load(Ordering::Relaxed);
+            let total = hits + misses;
+            let hit_ratio = if total > 0 { hits as f64 / total as f64 } else { 0.0 };
+
+            let metrics = Metrics {
+                timestamp: Utc::now().to_rfc3339(),
+                hits,
+                misses,
+                hit_ratio,
+                gets: GET_COUNTER.load(Ordering::Relaxed),
+                sets: SET_COUNTER.load(Ordering::Relaxed),
+                deletes: DEL_COUNTER.load(Ordering::Relaxed),
+                expired: EXPIRED_COUNTER.load(Ordering::Relaxed),
+                items,
+                memory_bytes: memory,
+            };
+
+            let url = format!("{}/{}/_doc", get_es_url(), ES_INDEX);
+            match client.post(&url)
+                .header("Content-Type", "application/json")
+                .json(&metrics)
+                .send()
+            {
+                Ok(resp) => {
+                    if !resp.status().is_success() {
+                        eprintln!("[ES] Failed to send metrics: {}", resp.status());
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[ES] Error sending metrics: {}", e);
+                }
+            }
+        }
     });
 }

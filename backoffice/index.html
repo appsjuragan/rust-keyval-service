@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KV Service Backoffice</title>
+    <link rel="stylesheet" href="index.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">⚡</span>
+                <h1>KV Service Monitor</h1>
+            </div>
+            <div class="status">
+                <span class="status-dot"></span>
+                <span id="connection-status">Connecting...</span>
+            </div>
+        </header>
+
+        <!-- Main Dashboard -->
+        <main class="dashboard">
+            <!-- Stats Cards Row -->
+            <section class="stats-row">
+                <div class="stat-card">
+                    <div class="stat-icon hits">🎯</div>
+                    <div class="stat-content">
+                        <span class="stat-value" id="total-hits">0</span>
+                        <span class="stat-label">Total Hits</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon misses">❌</div>
+                    <div class="stat-content">
+                        <span class="stat-value" id="total-misses">0</span>
+                        <span class="stat-label">Total Misses</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon items">📦</div>
+                    <div class="stat-content">
+                        <span class="stat-value" id="total-items">0</span>
+                        <span class="stat-label">Cached Items</span>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon memory">💾</div>
+                    <div class="stat-content">
+                        <span class="stat-value" id="memory-usage">0 KB</span>
+                        <span class="stat-label">Memory Usage</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Charts Row -->
+            <section class="charts-row">
+                <!-- Hit/Miss Ratio -->
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h2>Hit/Miss Ratio</h2>
+                        <span class="chart-badge" id="hit-ratio-badge">0%</span>
+                    </div>
+                    <div class="chart-container doughnut">
+                        <canvas id="hitMissChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Operations Breakdown -->
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h2>Operations</h2>
+                        <span class="chart-badge" id="ops-total">0 ops</span>
+                    </div>
+                    <div class="chart-container doughnut">
+                        <canvas id="opsChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Trending Section -->
+            <section class="trending-section">
+                <div class="chart-card wide">
+                    <div class="chart-header">
+                        <h2>📈 Trending (Last Hour)</h2>
+                        <div class="chart-controls">
+                            <button class="control-btn active" data-metric="hit_ratio">Hit Ratio</button>
+                            <button class="control-btn" data-metric="items">Items</button>
+                            <button class="control-btn" data-metric="memory">Memory</button>
+                        </div>
+                    </div>
+                    <div class="chart-container line">
+                        <canvas id="trendingChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Recent Activity -->
+            <section class="activity-section">
+                <div class="chart-card wide">
+                    <div class="chart-header">
+                        <h2>📊 Operations Over Time</h2>
+                    </div>
+                    <div class="chart-container line">
+                        <canvas id="opsTimeChart"></canvas>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <span>Last updated: <span id="last-update">Never</span></span>
+            <span>Auto-refresh: 5s</span>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>
