@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package raft;
+
+service RaftService {
+  // RequestVote RPC
+  rpc RequestVote(RequestVoteRequest) returns (RequestVoteResponse);
+  // AppendEntries RPC (Wait headers/payload via streaming for performance or simple unary for robustness first?)
+  // Using Unary for batched payload. Streaming can be an optimization later.
+  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
+}
+
+message RequestVoteRequest {
+  uint64 term = 1;
+  string candidate_id = 2;
+  uint64 last_log_index = 3;
+  uint64 last_log_term = 4;
+}
+
+message RequestVoteResponse {
+  uint64 term = 1;
+  bool vote_granted = 2;
+}
+
+message LogEntry {
+  uint64 index = 1;
+  uint64 term = 2;
+  // Encoded Command (Set/Del)
+  bytes data = 3;
+}
+
+message AppendEntriesRequest {
+  uint64 term = 1;
+  string leader_id = 2;
+  uint64 prev_log_index = 3;
+  uint64 prev_log_term = 4;
+  repeated LogEntry entries = 5;
+  uint64 leader_commit = 6;
+}
+
+message AppendEntriesResponse {
+  uint64 term = 1;
+  bool success = 2;
+  // Conflict optimization hints
+  uint64 conflict_index = 3;
+  uint64 conflict_term = 4;
+}

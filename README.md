@@ -1,228 +1,105 @@
-# 🔑 Rust Key-Value Service with Backoffice Dashboard
+# 🔑 Kevas: High-Performance Distributed KV Store
 
-A high-performance in-memory key-value store written in **Rust**, featuring real-time metrics visualization with an ELK stack and modern web dashboard.
+Kevas is a distributed, Kubernetes-native key-value service built in **Rust**. It utilizes the **Raft consensus algorithm** with **aggressive request batching** to achieve extreme throughput targets (up to 1M RPS).
 
 ![Rust](https://img.shields.io/badge/Rust-1.83-orange)
-![Docker](https://img.shields.io/badge/Docker-Compose-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
+![K8s](https://img.shields.io/badge/Kubernetes-Native-blue)
 
 ---
 
 ## ✨ Features
 
-### 🦀 Key-Value Service
-- **Commands**: `SET`, `GET`, `DEL`, `STATS`
-- **Key Expiration (TTL)**: Automatic cleanup of expired keys
-- **Thread Pool**: 8 concurrent workers for high throughput
-- **Metrics Tracking**: Hits, misses, memory usage, operations count
-- **Elasticsearch Integration**: Automatic metrics emission every 5 seconds
+- **🚀 Extreme Throughput**: Optimized for 1,000,000 RPS using request coalescing and batching.
+- **🛡️ Distributed Consensus**: Custom Raft implementation ensuring strong consistency across pods.
+- **🌐 Dual API Strategy**: 
+    - **REST (Axum)**: High-performance HTTP interface for clients.
+    - **gRPC (Tonic)**: Low-latency binary protocol for internal replication.
+- **☸️ Kubernetes Native**: Ready for deployment via StatefulSets with automatic peer discovery.
+- **🧵 Thread-Safe**: Lock-sharded storage architecture (`DashMap`) for maximum concurrency.
+- **🚫 Zero External Deps**: Self-contained consensus—no Redis or ZooKeeper required.
 
-### 📊 Backoffice Dashboard
-- **Real-time Charts**: Hit/miss ratio, operations breakdown, trending graphs
-- **Auto-refresh**: Updates every 5 seconds
-- **Modern UI**: Dark theme with glassmorphism design
-- **Responsive**: Works on desktop and mobile
+---
 
-### 🐳 Docker Ready
-- **Alpine-based Images**: Minimal footprint (~27MB for KV service)
-- **Full Stack**: Elasticsearch, Kibana, KV Service, Dashboard
-- **Single Command Deploy**: `docker-compose up -d`
+## 🏗️ Architecture
+
+```mermaid
+graph TD
+    Client[Client REST] -->|HTTP 8080| Node1[Node 1: Leader]
+    Node1 -->|Batching Driver| Log[(Raft Log)]
+    Node1 -->|gRPC 50051| Node2[Node 2: Follower]
+    Node1 -->|gRPC 50051| Node3[Node 3: Follower]
+    Node1 -->|Apply| SM1[State Machine]
+    Node2 -->|Apply| SM2[State Machine]
+    Node3 -->|Apply| SM3[State Machine]
+```
+
+### Batching Mechanisms
+Incoming write requests are not replicated immediately. Instead, they are collected into a **batch window** (default 5ms or 1000 items). This reduces the cost of consistency to a single roundtrip per batch, rather than per request.
 
 ---
 
 ## 🚀 Quick Start
 
-### Using Docker (Recommended)
-
+### 1. Build
+Ensure you have the Rust toolchain installed.
 ```bash
-# Clone the repository
-git clone https://github.com/your-repo/rust-keyval-service.git
-cd rust-keyval-service
-
-# Start all services
-docker-compose -f docker-compose.elk.yml up -d
-
-# Wait ~30 seconds for Elasticsearch to be ready
+cargo build --release
 ```
 
-### Access Points
-
-| Service | URL |
-|---------|-----|
-| **Dashboard** | http://localhost:8080 |
-| **KV Service** | `nc localhost 11223` |
-| **Elasticsearch** | http://localhost:9200 |
-| **Kibana** | http://localhost:5601 |
-
----
-
-## 📦 Project Structure
-
+### 2. Run Local Cluster (3 Nodes)
+Use the included PowerShell helper to spawn a local cluster simulation:
+```powershell
+.\run-local.ps1
 ```
-rust-keyval-service/
-├── src/
-│   └── main.rs              # Rust KV server with metrics
-├── backoffice/
-│   ├── index.html           # Dashboard UI
-│   ├── index.css            # Styling
-│   ├── app.js               # Chart.js visualizations
-│   └── Dockerfile           # Frontend container
-├── config/
-│   └── elasticsearch.yml    # ES CORS configuration
-├── poc/
-│   ├── bench.go             # Basic benchmark
-│   ├── bench-random.go      # Hit/miss ratio benchmark
-│   └── client.go            # Simple Go client
-├── Cargo.toml
-├── Dockerfile               # KV service container
-├── docker-compose.elk.yml   # Full stack deployment
-└── README.md
+
+### 3. Deploy to Kubernetes
+```bash
+kubectl apply -f k8s/raft-kv.yaml
 ```
 
 ---
 
-## 🔧 Protocol
+## 🔧 API Reference
 
-The service uses a simple TCP text protocol on **port 11223**.
+### REST API (Port 8080/8081/...)
+All operations are performed on the Leader node.
 
-### Commands
-
-```bash
-# Connect
-nc localhost 11223
-
-# SET key ttl_seconds value
-SET username 60 john_doe
-> OK
-
-# GET key
-GET username
-> john_doe
-
-# DEL key
-DEL username
-> 1
-
-# STATS
-STATS
-> items=5 memory=320bytes expired=2 hits=100 misses=30 hit_ratio=76.9%
-```
+- **SET**: `POST /{key}`
+  ```bash
+  curl.exe -X POST -H "Content-Type: application/json" -d '{"value": "data"}' http://localhost:8081/mykey
+  ```
+- **GET**: `GET /{key}`
+  ```bash
+  curl.exe http://localhost:8081/mykey
+  ```
+- **DELETE**: `DELETE /{key}`
+  ```bash
+  curl.exe -X DELETE http://localhost:8081/mykey
+  ```
 
 ---
 
 ## 📈 Benchmarking
-
-### Generate Traffic
+We provide a Go-based benchmarking tool to stress test the cluster.
 
 ```bash
 cd poc
-
-# Basic benchmark: 10 threads, 30 seconds
-go run bench.go 10 30
-
-# Hit/miss benchmark: 4 threads, 30 seconds, 100 cache keys
-go run bench-random.go 4 30 100
-```
-
-### Expected Results
-
-```
-🔥 Starting benchmark
-Threads      : 4
-Seconds      : 30
-Cache Keys   : 100
-Hit Ratio    : ~30%
-
-====== Benchmark Results ======
-Total Ops : 450000
-Duration  : 30.00s
-Throughput: 15000.00 ops/sec
-================================
+go run bench_rest.go <threads> <duration_seconds>
+# Example: Stress with 200 threads
+go run bench_rest.go 200 30
 ```
 
 ---
 
-## 🏗️ Development
-
-### Build Locally
-
-```bash
-# Build and run
-cargo run --release
-
-# Output
-KV server listening on port 11223
-[MONITOR] items=0  memory=0 bytes  expired=0  hits=0  misses=0  hit_ratio=0.0%
-```
-
-### Run with Docker
-
-```bash
-# Build images
-docker-compose -f docker-compose.elk.yml build
-
-# Start services
-docker-compose -f docker-compose.elk.yml up -d
-
-# View logs
-docker logs -f kv-service
-
-# Stop services
-docker-compose -f docker-compose.elk.yml down
-```
-
----
-
-## 🐳 Docker Image Sizes
-
-| Image | Size |
-|-------|------|
-| `rust-keyval-service-kv-service` | **26.7 MB** |
-| `rust-keyval-service-backoffice` | **81.2 MB** |
-
----
-
-## 📊 Dashboard Preview
-
-The backoffice dashboard provides real-time visualization of:
-
-- **Hit/Miss Ratio** - Doughnut chart showing cache efficiency
-- **Operations Breakdown** - GET/SET/DELETE distribution
-- **Trending Graphs** - Historical data over the last hour
-- **Usage Statistics** - Memory usage, cached items, expired keys
-
----
-
-## 🔧 Configuration
-
-### Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ES_URL` | `http://localhost:9200` | Elasticsearch endpoint |
-
-### Elasticsearch Settings
-
-CORS is configured in `config/elasticsearch.yml`:
-
-```yaml
-http.cors.enabled: true
-http.cors.allow-origin: "*"
-http.cors.allow-methods: OPTIONS, HEAD, GET, POST, PUT, DELETE
-```
+## 📦 Project Structure
+- `src/raft_node.rs`: Core consensus and batching logic.
+- `src/api.rs`: Axum handlers for the REST layer.
+- `src/grpc.rs`: Tonic implementation for Raft RPCs.
+- `proto/`: Protobuf definitions for ultra-fast replication.
+- `k8s/`: Kubernetes manifests for StatefulSets.
 
 ---
 
 ## 📝 License
-
-MIT License - feel free to use this project for any purpose.
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Commit your changes
-4. Push to the branch
-5. Open a Pull Request
+MIT License
